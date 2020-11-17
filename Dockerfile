@@ -1,12 +1,15 @@
 FROM registry.cn-hangzhou.aliyuncs.com/prince/alpine-golang:1.11.5 as builder
 MAINTAINER prince <8923052@qq.com>
 ARG VERSION=1.1.7
+
+RUN mkdir -p /go/src/go-fastdfs
+COPY . /go/src/go-fastdfs
+
 RUN set -xe; \
 	apk update; \
 	apk add --no-cache --virtual .build-deps \
 	git; \
 	cd /go/src/; \
-	git clone https://github.com/sjqzhang/go-fastdfs.git; \
 	cd go-fastdfs; \
 	go get; \
 	CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o fileserver; \

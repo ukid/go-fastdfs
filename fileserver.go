@@ -223,6 +223,7 @@ type Server struct {
 }
 type FileInfo struct {
 	Name      string   `json:"name"`
+	KeepName  bool     `json:"keepname"`
 	ReName    string   `json:"rename"`
 	Path      string   `json:"path"`
 	Md5       string   `json:"md5"`
@@ -2308,7 +2309,7 @@ func (this *Server) SaveUploadFile(file multipart.File, header *multipart.FileHe
 	if len(Config().Extensions) > 0 && !this.util.Contains(path.Ext(fileInfo.Name), Config().Extensions) {
 		return fileInfo, errors.New("(error)file extension mismatch")
 	}
-	if Config().RenameFile {
+	if Config().RenameFile && !fileInfo.KeepName {
 		fileInfo.ReName = this.util.MD5(this.util.GetUUID()) + path.Ext(fileInfo.Name)
 	}
 	folder = time.Now().Format("20060102/15/04")
@@ -2440,6 +2441,7 @@ func (this *Server) upload(w http.ResponseWriter, r *http.Request) {
 		//		pathname     string
 		md5sum       string
 		fileName     string
+		keepName     string
 		fileInfo     FileInfo
 		uploadFile   multipart.File
 		uploadHeader *multipart.FileHeader
@@ -2473,6 +2475,7 @@ func (this *Server) upload(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		md5sum = r.FormValue("md5")
 		fileName = r.FormValue("filename")
+		keepName = r.FormValue("keepname")
 		output = r.FormValue("output")
 		if Config().ReadOnly {
 			msg = "(error) readonly"
@@ -2484,6 +2487,7 @@ func (this *Server) upload(w http.ResponseWriter, r *http.Request) {
 		if Config().EnableCustomPath {
 			fileInfo.Path = r.FormValue("path")
 			fileInfo.Path = strings.Trim(fileInfo.Path, "/")
+			fileInfo.KeepName = "true" == keepName;
 		}
 		scene = r.FormValue("scene")
 		code = r.FormValue("code")
