@@ -33,6 +33,7 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+	"encoding/base64"
 
 	"github.com/astaxie/beego/httplib"
 	mapset "github.com/deckarep/golang-set"
@@ -50,6 +51,8 @@ import (
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	"github.com/syndtr/goleveldb/leveldb/util"
+
+	"github.com/dgrijalva/jwt-go"
 )
 
 var staticHandler http.Handler
@@ -188,6 +191,12 @@ const (
 	"enable_cross_origin": true,
 	"是否开启Google认证，实现安全的上传、下载": "默认不开启",
 	"enable_google_auth": false,
+	"Jwt认证方式,默认留空不开启": "rsa|hmac|ecdsa",
+	"jwt_auth_method": "",
+	"Jwt认证公钥文件名，实现安全的上传": "与配置文件同目录,hmac需base64 encode",
+	"jwt_auth_pub": "hmac.key",
+	"Jwt认证算法": "rsa(RS256|RS384|RS512) hmac(HS256|HS384|HS512) ecdsa(ES256|ES384|ES512)",
+	"jwt_auth_alg": "HS512",
 	"认证url": "当url不为空时生效,注意:普通上传中使用http参数 auth_token 作为认证参数, 在断点续传中通过HTTP头Upload-Metadata中的auth_token作为认证参数,认证流程参考认证架构图",
 	"auth_url": "",
 	"下载是否认证": "默认不认证(注意此选项是在auth_url不为空的情况下生效)",
@@ -305,6 +314,9 @@ type GloablConfig struct {
 	ReadOnly             bool     `json:"read_only"`
 	EnableCrossOrigin    bool     `json:"enable_cross_origin"`
 	EnableGoogleAuth     bool     `json:"enable_google_auth"`
+	JwtAuthMethod        string   `json:"jwt_auth_method"`
+	JwtAuthPub           string   `json:"jwt_auth_pub"`
+	JwtAuthAlg           string   `json:"jwt_auth_alg"`
 	AuthUrl              string   `json:"auth_url"`
 	EnableDownloadAuth   bool     `json:"enable_download_auth"`
 	DefaultDownload      bool     `json:"default_download"`
@@ -2453,6 +2465,7 @@ func (this *Server) upload(w http.ResponseWriter, r *http.Request) {
 		code         string
 		secret       interface{}
 		msg          string
+		jwttoken     string
 	)
 	output = r.FormValue("output")
 	if Config().EnableCrossOrigin {
@@ -2505,6 +2518,21 @@ func (this *Server) upload(w http.ResponseWriter, r *http.Request) {
 					w.Write([]byte(this.util.JsonEncodePretty(result)))
 					return
 				}
+			}
+		}
+		if Config().JwtAuthMethod != "" {
+			jwttoken = r.FormValue("jwt")
+
+			if verify, err := this.VerifyJwtToken(jwttoken); verify == false || err != nil {
+				this.NotPermit(w, r)
+				msg = "Jwttoken auth error. "
+				if err != nil {
+					msg = msg + err.Error()
+				}
+				result.Message = msg
+				log.Error(msg)
+				w.Write([]byte(this.util.JsonEncodePretty(result)))
+				return
 			}
 		}
 		fileInfo.Md5 = md5sum
@@ -3529,6 +3557,49 @@ func (this *Server) ListDir(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(this.util.JsonEncodePretty(result)))
 	return
 }
+func (this *Server) VerifyJwtToken(token string) (bool, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return false, errors.New("error token format")
+	}
+	method := jwt.GetSigningMethod(Config().JwtAuthAlg)
+	keyData, readerr := ioutil.ReadFile(CONF_DIR + "/" + Config().JwtAuthPub)
+	if readerr != nil {
+		return false, errors.New("auth file read error")
+	}
+	switch(Config().JwtAuthMethod){
+		case "rsa":
+			key, keyerr := jwt.ParseRSAPublicKeyFromPEM(keyData)
+			if keyerr != nil {
+				return false, keyerr
+			}
+			verifyerr := method.Verify(strings.Join(parts[0:2], "."), parts[2], key)
+			if verifyerr != nil {
+				return false, verifyerr
+			}
+		case "hmac":
+			key, keyerr := base64.StdEncoding.DecodeString(string(keyData))
+			if keyerr != nil {
+				return false, keyerr
+			}
+			verifyerr := method.Verify(strings.Join(parts[0:2], "."), parts[2], key)
+			if verifyerr != nil {
+				return false, verifyerr
+			}
+		case "ecdsa":
+			key, keyerr := jwt.ParseECPublicKeyFromPEM(keyData)
+			if keyerr != nil {
+				return false, keyerr
+			}
+			verifyerr := method.Verify(strings.Join(parts[0:2], "."), parts[2], key)
+			if verifyerr != nil {
+				return false, verifyerr
+			}
+		default:
+			return false, errors.New("auth method config error")
+	}
+	return true, nil
+}
 func (this *Server) VerifyGoogleCode(secret string, code string, discrepancy int64) bool {
 	var (
 		goauth *googleAuthenticator.GAuth
@@ -3754,6 +3825,8 @@ func (this *Server) Index(w http.ResponseWriter, r *http.Request) {
 					  <input type="text" id="path" name="path" value="" /></span>
 	              <span class="form-line">google认证码(code):
 					  <input type="text" id="code" name="code" value="" /></span>
+					<span class="form-line">jwt认证码(jwt):
+					  <input type="text" id="jwt" name="jwt" value="" /></span>
 					 <span class="form-line">自定义认证(auth_token):
 					  <input type="text" id="auth_token" name="auth_token" value="" /></span>
 					<input type="submit" name="submit" value="upload" />
